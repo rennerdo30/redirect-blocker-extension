@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Redirect Blocker - Test Page</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #eaeaea;
+            min-height: 100vh;
+            padding: 40px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: #e94560;
+            margin-bottom: 20px;
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+
+        .card h2 {
+            color: #4ecca3;
+            margin-bottom: 12px;
+        }
+
+        .status {
+            font-size: 18px;
+            padding: 16px;
+            border-radius: 8px;
+            margin: 12px 0;
+        }
+
+        .status.success {
+            background: rgba(78, 204, 163, 0.2);
+            border: 1px solid #4ecca3;
+        }
+
+        .status.danger {
+            background: rgba(233, 69, 96, 0.2);
+            border: 1px solid #e94560;
+        }
+
+        .log {
+            background: #0a0a0a;
+            border-radius: 8px;
+            padding: 16px;
+            font-family: monospace;
+            font-size: 13px;
+            max-height: 300px;
+            overflow-y: auto;
+            margin-top: 12px;
+        }
+
+        .log-entry {
+            padding: 4px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+
+        .log-entry.blocked {
+            color: #4ecca3;
+        }
+
+        .log-entry.redirect {
+            color: #e94560;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+            margin-right: 8px;
+            margin-bottom: 8px;
+        }
+
+        .btn-primary {
+            background: #e94560;
+            color: white;
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+        }
+
+        .btn:hover {
+            opacity: 0.9;
+        }
+
+        .page-id {
+            font-size: 48px;
+            color: #e94560;
+            font-weight: bold;
+        }
+
+        code {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>🛡️ Redirect Blocker Test Page</h1>
+
+        <div class="card">
+            <h2>Page Instance</h2>
+            <p class="page-id" id="pageId">---</p>
+            <p>This unique ID identifies this specific tab. If the extension is working, this should stay the same even
+                with multiple tabs open.</p>
+        </div>
+
+        <div class="card">
+            <h2>Detection Status</h2>
+            <div class="status" id="detectionStatus">Checking for other tabs...</div>
+            <p id="tabCount">Tabs detected: checking...</p>
+        </div>
+
+        <div class="card">
+            <h2>Manual Tests</h2>
+            <p>Click these buttons to simulate redirect attacks:</p>
+            <br>
+            <button class="btn btn-primary" onclick="testBroadcastChannel()">Test BroadcastChannel</button>
+            <button class="btn btn-primary" onclick="testLocalStorage()">Test localStorage</button>
+            <button class="btn btn-primary" onclick="testLocationRedirect()">Test location.href</button>
+            <button class="btn btn-secondary" onclick="clearLog()">Clear Log</button>
+        </div>
+
+        <div class="card">
+            <h2>Activity Log</h2>
+            <div class="log" id="log">
+                <div class="log-entry">Test page loaded...</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>How This Test Works</h2>
+            <p>This page simulates the redirect behavior you've been experiencing:</p>
+            <ul style="margin: 12px 0 0 20px; line-height: 1.8;">
+                <li><strong>BroadcastChannel</strong>: Tabs communicate to detect each other</li>
+                <li><strong>localStorage</strong>: A shared key triggers the <code>storage</code> event</li>
+                <li><strong>location.href</strong>: Redirect to homepage when detected</li>
+            </ul>
+            <br>
+            <p><strong>Without the extension:</strong> Opening multiple tabs will redirect all to the homepage.</p>
+            <p><strong>With the extension:</strong> Tabs should stay on this page.</p>
+        </div>
+    </div>
+
+    <script>
+        // Unique page ID
+        const pageId = Math.random().toString(36).substring(2, 8).toUpperCase();
+        document.getElementById('pageId').textContent = pageId;
+
+        // Logging
+        function log(message, type = '') {
+            const logEl = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry ' + type;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logEl.appendChild(entry);
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '<div class="log-entry">Log cleared</div>';
+        }
+
+        // ============================================
+        // ATTACK SIMULATION: BroadcastChannel
+        // ============================================
+
+        let tabChannel;
+        let detectedTabs = 1;
+
+        function initBroadcastChannel() {
+            try {
+                tabChannel = new BroadcastChannel('redirect-test-channel');
+                log('BroadcastChannel created: redirect-test-channel');
+
+                tabChannel.onmessage = (event) => {
+                    log(`BroadcastChannel message received: ${JSON.stringify(event.data)}`);
+
+                    if (event.data.type === 'ping') {
+                        // Another tab is checking for instances
+                        tabChannel.postMessage({ type: 'pong', from: pageId });
+                    }
+
+                    if (event.data.type === 'pong') {
+                        detectedTabs++;
+                        updateDetectionStatus();
+
+                        // ATTACK: Redirect if more than 1 tab detected
+                        if (detectedTabs > 1) {
+                            log(`⚠️ Multiple tabs detected! Attempting redirect to homepage...`, 'redirect');
+                            setTimeout(() => {
+                                window.location.href = '/'; // This should be blocked by the extension
+                            }, 500);
+                        }
+                    }
+                };
+
+                // Send ping to detect other tabs
+                setTimeout(() => {
+                    log('Sending BroadcastChannel ping...');
+                    tabChannel.postMessage({ type: 'ping', from: pageId });
+                }, 100);
+
+            } catch (e) {
+                log(`BroadcastChannel blocked or failed: ${e.message}`, 'blocked');
+            }
+        }
+
+        function testBroadcastChannel() {
+            log('--- Manual BroadcastChannel Test ---');
+            try {
+                const testChannel = new BroadcastChannel('manual-test');
+                log('Created test channel');
+                testChannel.postMessage({ test: true });
+                log('Posted message to channel');
+                testChannel.close();
+                log('Channel closed');
+            } catch (e) {
+                log(`BroadcastChannel blocked: ${e.message}`, 'blocked');
+            }
+        }
+
+        // ============================================
+        // ATTACK SIMULATION: localStorage
+        // ============================================
+
+        function initLocalStorage() {
+            try {
+                // Listen for storage events (from other tabs)
+                window.addEventListener('storage', (event) => {
+                    log(`Storage event received: ${event.key} = ${event.newValue}`);
+
+                    if (event.key === 'tabActive') {
+                        log('⚠️ Another tab detected via localStorage! Attempting redirect...', 'redirect');
+                        window.location.href = '/';
+                    }
+                });
+                log('Storage event listener registered');
+
+                // Write our presence
+                localStorage.setItem('tabActive', Date.now().toString());
+                log('Set localStorage tabActive');
+
+            } catch (e) {
+                log(`localStorage operations blocked: ${e.message}`, 'blocked');
+            }
+        }
+
+        function testLocalStorage() {
+            log('--- Manual localStorage Test ---');
+            try {
+                localStorage.setItem('tabActive', 'test-' + Date.now());
+                log('Wrote to tabActive key');
+
+                localStorage.setItem('tabCount', '5');
+                log('Wrote to tabCount key');
+
+                const value = localStorage.getItem('tabActive');
+                log(`Read tabActive: ${value}`);
+            } catch (e) {
+                log(`localStorage blocked: ${e.message}`, 'blocked');
+            }
+        }
+
+        // ============================================
+        // ATTACK SIMULATION: location.href
+        // ============================================
+
+        function testLocationRedirect() {
+            log('--- Manual location.href Test ---');
+            log('Attempting to redirect to homepage via location.href...');
+            try {
+                window.location.href = '/';
+                // If we get here and don't redirect, it was blocked
+                setTimeout(() => {
+                    log('✅ Redirect was blocked!', 'blocked');
+                }, 100);
+            } catch (e) {
+                log(`Redirect blocked: ${e.message}`, 'blocked');
+            }
+        }
+
+        // ============================================
+        // Status Updates
+        // ============================================
+
+        function updateDetectionStatus() {
+            const statusEl = document.getElementById('detectionStatus');
+            const countEl = document.getElementById('tabCount');
+
+            countEl.textContent = `Tabs detected: ${detectedTabs}`;
+
+            if (detectedTabs > 1) {
+                statusEl.className = 'status danger';
+                statusEl.textContent = `⚠️ ${detectedTabs} tabs detected! Redirect attempt incoming...`;
+            } else {
+                statusEl.className = 'status success';
+                statusEl.textContent = '✅ Only this tab detected (or blocking is working)';
+            }
+        }
+
+        // Initialize
+        log(`Page loaded with ID: ${pageId}`);
+        initBroadcastChannel();
+        initLocalStorage();
+
+        // Initial status after a delay
+        setTimeout(() => {
+            updateDetectionStatus();
+            if (detectedTabs === 1) {
+                log('✅ No other tabs detected or blocking is working', 'blocked');
+            }
+        }, 1000);
+    </script>
+</body>
+
+</html>

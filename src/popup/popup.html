@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Redirect Blocker</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+
+<body>
+  <div class="container">
+    <header class="header">
+      <div class="logo">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+          <path d="M9 12l2 2 4-4" />
+        </svg>
+        <h1>Redirect Blocker</h1>
+      </div>
+    </header>
+
+    <main class="main">
+      <!-- Mode Selection -->
+      <section class="section mode-section">
+        <h2>Protection Mode</h2>
+        <div class="mode-options">
+          <label class="mode-option">
+            <input type="radio" name="mode" value="off">
+            <span class="mode-label">
+              <span class="mode-title">Off</span>
+              <span class="mode-desc">Completely disabled</span>
+            </span>
+          </label>
+          <label class="mode-option">
+            <input type="radio" name="mode" value="specific" checked>
+            <span class="mode-label">
+              <span class="mode-title">Specific Sites</span>
+              <span class="mode-desc">Enable per-site below</span>
+            </span>
+          </label>
+          <label class="mode-option">
+            <input type="radio" name="mode" value="global">
+            <span class="mode-label">
+              <span class="mode-title">Global</span>
+              <span class="mode-desc">All sites protected</span>
+            </span>
+          </label>
+        </div>
+      </section>
+
+      <!-- Current Site Section (only for 'specific' mode) -->
+      <section class="section site-section" id="siteSection">
+        <h2>Current Site</h2>
+        <div class="site-info">
+          <span class="site-hostname" id="siteHostname">---</span>
+          <label class="toggle">
+            <input type="checkbox" id="siteToggle">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <p class="site-status" id="siteStatus">Not protected</p>
+      </section>
+
+      <!-- Statistics Section -->
+      <section class="section stats-section">
+        <h2>Statistics</h2>
+        <div class="stats-grid">
+          <div class="stat-item">
+            <span class="stat-value" id="totalBlocked">0</span>
+            <span class="stat-label">Blocked</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-value" id="sitesProtected">0</span>
+            <span class="stat-label">Sites</span>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <button class="btn btn-link" id="resetStats">Reset Statistics</button>
+    </footer>
+  </div>
+  <script src="popup.js"></script>
+</body>
+
+</html>
