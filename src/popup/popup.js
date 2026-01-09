@@ -138,9 +138,9 @@ async function handleModeChange(event) {
         updateSiteSectionVisibility(mode);
         showToast(`Mode changed to ${mode}`, 'success');
 
-        // Reload tab to apply changes
+        // Delay reload slightly so user sees the toast
         if (currentTab?.id) {
-            chrome.tabs.reload(currentTab.id);
+            setTimeout(() => chrome.tabs.reload(currentTab.id), 300);
         }
     } catch (error) {
         console.error('Failed to set mode:', error);
@@ -161,9 +161,9 @@ async function handleSiteToggle() {
         }
         updateSiteStatus(enabled);
 
-        // Reload tab to apply changes
+        // Delay reload slightly so user sees the toast
         if (currentTab?.id) {
-            chrome.tabs.reload(currentTab.id);
+            setTimeout(() => chrome.tabs.reload(currentTab.id), 300);
         }
     } catch (error) {
         console.error('Failed to toggle site:', error);

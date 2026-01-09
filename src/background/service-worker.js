@@ -200,11 +200,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
             case 'LOG_ENTRY':
                 // Logs from content script
-                const prefix = `[CS @ ${new URL(message.url).hostname}]`;
-                if (message.level === 'warn') {
-                    console.warn(`${prefix} ${message.message}`);
-                } else {
-                    console.log(`${prefix} ${message.message}`);
+                try {
+                    const hostname = message.url ? new URL(message.url).hostname : 'unknown';
+                    const prefix = `[CS @ ${hostname}]`;
+                    if (message.level === 'warn') {
+                        console.warn(`${prefix} ${message.message}`);
+                    } else {
+                        console.log(`${prefix} ${message.message}`);
+                    }
+                } catch (e) {
+                    console.log(`[CS] ${message.message}`);
                 }
                 return { success: true };
 

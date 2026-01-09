@@ -50,11 +50,18 @@
     sendLogToBackground('info', message, ...args);
   }
 
-  function warn(message, ...args) {
-    if (typeof console !== 'undefined') {
-      console.warn(`${LOG_PREFIX} ${message}`, ...args);
+  // Report a blocked action to background for statistics
+  function reportBlocked() {
+    try {
+      chrome.runtime.sendMessage({
+        type: 'INCREMENT_BLOCKED',
+        url: window.location.href
+      }).catch(() => {
+        // Ignore errors if background script is unreachable
+      });
+    } catch (e) {
+      // Ignore
     }
-    sendLogToBackground('warn', message, ...args);
   }
 
   // ============================================
@@ -66,67 +73,35 @@
 
   // Helper to sanitize code - removes debugger statements and common obfuscations
   function sanitizeCode(code, source = 'unknown') {
-    let modified = false;
     let newCode = code;
 
     // 1. Strip basic debugger statements (with optional semicolon and whitespace)
-    if (/\bdebugger\b/.test(newCode)) {
-      newCode = newCode.replace(/\bdebugger\s*;?/g, '/* debugger removed */');
-      modified = true;
-    }
+    newCode = newCode.replace(/\bdebugger\s*;?/g, '/* debugger removed */');
 
     // 2. Strip constructor("debugger") pattern
     // Matches: .constructor("debugger") or .constructor('debugger') or .constructor(`debugger`)
-    const constructorPattern = /\.constructor\s*\(\s*(["'`])debugger\1\s*\)/g;
-    if (constructorPattern.test(newCode)) {
-      newCode = newCode.replace(constructorPattern, '.constructor("/* noop */")');
-      modified = true;
-    }
+    newCode = newCode.replace(/\.constructor\s*\(\s*(["'`])debugger\1\s*\)/g, '.constructor("/* noop */")');
 
     // 3. Strip eval("debugger") and similar patterns
-    const evalDebuggerPattern = /\b(eval|setTimeout|setInterval)\s*\(\s*(["'`])debugger\2/g;
-    if (evalDebuggerPattern.test(newCode)) {
-      newCode = newCode.replace(evalDebuggerPattern, '$1($2/* noop */');
-      modified = true;
-    }
+    newCode = newCode.replace(/\b(eval|setTimeout|setInterval)\s*\(\s*(["'`])debugger\2/g, '$1($2/* noop */');
 
     // 4. Strip Function("debugger") constructor calls
-    const functionConstructorPattern = /\bFunction\s*\(\s*(["'`])debugger\1\s*\)/g;
-    if (functionConstructorPattern.test(newCode)) {
-      newCode = newCode.replace(functionConstructorPattern, 'Function($1/* noop */$1)');
-      modified = true;
-    }
+    newCode = newCode.replace(/\bFunction\s*\(\s*(["'`])debugger\1\s*\)/g, 'Function($1/* noop */$1)');
 
     // 5. Strip new Function("debugger") pattern
-    const newFunctionPattern = /new\s+Function\s*\(\s*(["'`])debugger\1\s*\)/g;
-    if (newFunctionPattern.test(newCode)) {
-      newCode = newCode.replace(newFunctionPattern, 'new Function($1/* noop */$1)');
-      modified = true;
-    }
+    newCode = newCode.replace(/new\s+Function\s*\(\s*(["'`])debugger\1\s*\)/g, 'new Function($1/* noop */$1)');
 
     // 6. Strip string concatenation patterns like "de"+"bugger" or 'de'+'bugger'
     // This catches: "de" + "bugger", 'de' + 'bugger', "deb" + "ugger", etc.
-    const concatPattern = /(["'])de(?:b(?:ug(?:g(?:er?)?)?)?)?(\1)\s*\+\s*(["'])(?:b?u?g?g?e?r?)\3/gi;
-    if (concatPattern.test(newCode)) {
-      newCode = newCode.replace(concatPattern, '$1noop$2');
-      modified = true;
-    }
+    newCode = newCode.replace(/(["'])de(?:b(?:ug(?:g(?:er?)?)?)?)?(\1)\s*\+\s*(["'])(?:b?u?g?g?e?r?)\3/gi, '$1noop$2');
 
     // 7. Strip Unicode escape sequences for debugger: \u0064\u0065\u0062\u0075\u0067\u0067\u0065\u0072
-    const unicodeDebugger = /\\u0064\\u0065\\u0062\\u0075\\u0067\\u0067\\u0065\\u0072/gi;
-    if (unicodeDebugger.test(newCode)) {
-      newCode = newCode.replace(unicodeDebugger, 'noop');
-      modified = true;
-    }
+    newCode = newCode.replace(/\\u0064\\u0065\\u0062\\u0075\\u0067\\u0067\\u0065\\u0072/gi, 'noop');
 
     // 8. Strip hex escape sequences: \x64\x65\x62\x75\x67\x67\x65\x72
-    const hexDebugger = /\\x64\\x65\\x62\\x75\\x67\\x67\\x65\\x72/gi;
-    if (hexDebugger.test(newCode)) {
-      newCode = newCode.replace(hexDebugger, 'noop');
-      modified = true;
-    }
+    newCode = newCode.replace(/\\x64\\x65\\x62\\x75\\x67\\x67\\x65\\x72/gi, 'noop');
 
-    if (modified) {
+    if (newCode !== code) {
       log('🔧 Sanitized script from:', source);
     }
     return newCode;
@@ -296,6 +271,7 @@
       this._channelName = channelName;
       this._listeners = new Map();
       blockedCount++;
+      reportBlocked();
     }
 
     postMessage(message) {
@@ -359,18 +335,10 @@
 
   // AGGRESSIVE: Anti-Debugger & Constructor Protection
   (function antiDebugger() {
-    // 1. Remove the self-inflicted 'debuggerTrap' which was causing pauses
-
-    // 2. Hardened Function constructor override
+    // Hardened Function constructor override
     // Sites often use (function(){}).constructor("debugger")() to bypass window.Function
     const OriginalFunction = window.Function;
     const NativeFunction = OriginalFunction; // alias
-
-    // Create the proxy handler
-    function createFunctionProxy(msg) {
-      log(msg || 'Blocked Function constructor');
-      return function () { };
-    }
 
     // Override window.Function
     window.Function = function (...args) {
@@ -378,6 +346,7 @@
       if (typeof body === 'string' && body.includes('debugger')) {
         log('Blocked Function("debugger") call');
         blockedCount++;
+        reportBlocked();
         // Strip the debugger statement
         args[args.length - 1] = body.replace(/debugger\s*;?/g, '');
         return NativeFunction.apply(this, args);
@@ -399,6 +368,7 @@
         if (typeof body === 'string' && body.includes('debugger')) {
           log('Blocked AsyncFunction("debugger") call');
           blockedCount++;
+          reportBlocked();
           args[args.length - 1] = body.replace(/debugger\s*;?/g, '');
           return OriginalAsyncFunction.apply(this, args);
         }
@@ -455,6 +425,7 @@
           if (typeof body === 'string' && (body.includes('debugger') || body === 'debugger')) {
             log('🛡️ Blocked dynamic function with debugger');
             blockedCount++;
+            reportBlocked();
             // Return a no-op function
             return function () { };
           }
@@ -483,6 +454,7 @@
     if (typeof code === 'string' && code.includes('debugger')) {
       log('Stripped debugger from eval');
       blockedCount++;
+      reportBlocked();
       code = code.replace(/debugger\s*;?/g, '');
     }
     return originalEval.call(this, code);
@@ -496,6 +468,7 @@
     if (typeof handler === 'string' && handler.includes('debugger')) {
       log('Stripped debugger from setInterval');
       blockedCount++;
+      reportBlocked();
       handler = handler.replace(/debugger\s*;?/g, '');
     }
     return originalSetInterval.call(this, handler, timeout, ...args);
@@ -505,6 +478,7 @@
     if (typeof handler === 'string' && handler.includes('debugger')) {
       log('Stripped debugger from setTimeout');
       blockedCount++;
+      reportBlocked();
       handler = handler.replace(/debugger\s*;?/g, '');
     }
     return originalSetTimeout.call(this, handler, timeout, ...args);
@@ -537,6 +511,7 @@
     if (type === 'storage') {
       log('Blocked storage event listener registration');
       blockedCount++;
+      reportBlocked();
       // Don't register the listener
       return;
     }
@@ -553,9 +528,17 @@
   const SUSPICIOUS_PATHS = ['/', '/login', '/signin', '/auth', '/home', '/index', '/logout', '/signout'];
 
   // Track if user has interacted (clicks, etc.) - legitimate navigation
+  // 500ms window to allow for async operations after user action
   let userInteracted = false;
-  document.addEventListener('click', () => { userInteracted = true; setTimeout(() => { userInteracted = false; }, 100); }, true);
-  document.addEventListener('submit', () => { userInteracted = true; setTimeout(() => { userInteracted = false; }, 100); }, true);
+  document.addEventListener('click', () => { userInteracted = true; setTimeout(() => { userInteracted = false; }, 500); }, true);
+  document.addEventListener('submit', () => { userInteracted = true; setTimeout(() => { userInteracted = false; }, 500); }, true);
+  document.addEventListener('keydown', (e) => {
+    // Allow navigation from keyboard shortcuts (Enter on links, etc.)
+    if (e.key === 'Enter') {
+      userInteracted = true;
+      setTimeout(() => { userInteracted = false; }, 500);
+    }
+  }, true);
 
   /**
    * Smart navigation blocking - only blocks suspicious redirect patterns
@@ -589,6 +572,7 @@
       if (isSameOrigin && isFromDeepPage && isToSuspiciousPath) {
         log(`🛡️ BLOCKED suspicious redirect [${method}]: ${currentUrl.pathname} -> ${targetUrl.pathname}`);
         blockedCount++;
+        reportBlocked();
         return true;
       }
 
@@ -596,6 +580,7 @@
       if (!isSameOrigin) {
         log(`🛡️ BLOCKED cross-origin redirect [${method}]: ${currentUrl.origin} -> ${targetUrl.origin}`);
         blockedCount++;
+        reportBlocked();
         return true;
       }
 
@@ -639,8 +624,14 @@
 
     Object.defineProperty(window.location, 'reload', {
       value: function () {
+        // Allow if user just interacted (legitimate refresh)
+        if (userInteracted) {
+          log('✅ Allowed location.reload() (user interaction)');
+          return originalReload();
+        }
         log('🛡️ BLOCKED location.reload()');
         blockedCount++;
+        reportBlocked();
         return;
       },
       writable: false,
@@ -657,8 +648,6 @@
     const originalPushState = history.pushState.bind(history);
     const originalReplaceState = history.replaceState.bind(history);
     const originalGo = history.go.bind(history);
-    const originalBack = history.back.bind(history);
-    const originalForward = history.forward.bind(history);
 
     history.pushState = function (state, unused, url) {
       if (url && shouldBlockNavigation(url, 'history.pushState')) {
@@ -677,11 +666,16 @@
     // Block history navigation (go/back/forward) if it looks suspicious
     history.go = function (delta) {
       if (delta === 0 || delta === undefined || delta === null) {
+        // Allow if user just interacted
+        if (userInteracted) {
+          log('✅ Allowed history.go(0) (user interaction)');
+          return originalGo(delta);
+        }
         log('🛡️ BLOCKED history.go(0) reload');
         blockedCount++;
+        reportBlocked();
         return;
       }
-      log(`⚠️ History.go(${delta}) called`);
       return originalGo(delta);
     };
 
@@ -713,12 +707,12 @@
   }
 
   const originalSetItem = Storage.prototype.setItem;
-  const originalGetItem = Storage.prototype.getItem;
 
   Storage.prototype.setItem = function (key, value) {
     if (isSuspiciousKey(key)) {
       log(`Blocked suspicious localStorage write: "${key}" = "${value}"`);
       blockedCount++;
+      reportBlocked();
       return; // Don't actually write
     }
     return originalSetItem.call(this, key, value);
