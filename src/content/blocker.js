@@ -64,14 +64,14 @@
   // Track processed scripts to avoid double-processing
   const processedScripts = new Set();
 
-  // Helper to sanitize code
+  // Helper to sanitize code - removes debugger statements and common obfuscations
   function sanitizeCode(code, source = 'unknown') {
     let modified = false;
     let newCode = code;
 
-    // 1. Strip basic debugger statements
-    if (newCode.includes('debugger')) {
-      newCode = newCode.replace(/debugger\s*;?/g, '/* debugger removed */');
+    // 1. Strip basic debugger statements (with optional semicolon and whitespace)
+    if (/\bdebugger\b/.test(newCode)) {
+      newCode = newCode.replace(/\bdebugger\s*;?/g, '/* debugger removed */');
       modified = true;
     }
 
@@ -79,9 +79,51 @@
     // Matches: .constructor("debugger") or .constructor('debugger') or .constructor(`debugger`)
     const constructorPattern = /\.constructor\s*\(\s*(["'`])debugger\1\s*\)/g;
     if (constructorPattern.test(newCode)) {
-      newCode = newCode.replace(constructorPattern, '.constructor("/* debugger removed */")');
+      newCode = newCode.replace(constructorPattern, '.constructor("/* noop */")');
       modified = true;
-      log('🔧 Stripped constructor("debugger") pattern from:', source);
+    }
+
+    // 3. Strip eval("debugger") and similar patterns
+    const evalDebuggerPattern = /\b(eval|setTimeout|setInterval)\s*\(\s*(["'`])debugger\2/g;
+    if (evalDebuggerPattern.test(newCode)) {
+      newCode = newCode.replace(evalDebuggerPattern, '$1($2/* noop */');
+      modified = true;
+    }
+
+    // 4. Strip Function("debugger") constructor calls
+    const functionConstructorPattern = /\bFunction\s*\(\s*(["'`])debugger\1\s*\)/g;
+    if (functionConstructorPattern.test(newCode)) {
+      newCode = newCode.replace(functionConstructorPattern, 'Function($1/* noop */$1)');
+      modified = true;
+    }
+
+    // 5. Strip new Function("debugger") pattern
+    const newFunctionPattern = /new\s+Function\s*\(\s*(["'`])debugger\1\s*\)/g;
+    if (newFunctionPattern.test(newCode)) {
+      newCode = newCode.replace(newFunctionPattern, 'new Function($1/* noop */$1)');
+      modified = true;
+    }
+
+    // 6. Strip string concatenation patterns like "de"+"bugger" or 'de'+'bugger'
+    // This catches: "de" + "bugger", 'de' + 'bugger', "deb" + "ugger", etc.
+    const concatPattern = /(["'])de(?:b(?:ug(?:g(?:er?)?)?)?)?(\1)\s*\+\s*(["'])(?:b?u?g?g?e?r?)\3/gi;
+    if (concatPattern.test(newCode)) {
+      newCode = newCode.replace(concatPattern, '$1noop$2');
+      modified = true;
+    }
+
+    // 7. Strip Unicode escape sequences for debugger: \u0064\u0065\u0062\u0075\u0067\u0067\u0065\u0072
+    const unicodeDebugger = /\\u0064\\u0065\\u0062\\u0075\\u0067\\u0067\\u0065\\u0072/gi;
+    if (unicodeDebugger.test(newCode)) {
+      newCode = newCode.replace(unicodeDebugger, 'noop');
+      modified = true;
+    }
+
+    // 8. Strip hex escape sequences: \x64\x65\x62\x75\x67\x67\x65\x72
+    const hexDebugger = /\\x64\\x65\\x62\\x75\\x67\\x67\\x65\\x72/gi;
+    if (hexDebugger.test(newCode)) {
+      newCode = newCode.replace(hexDebugger, 'noop');
+      modified = true;
     }
 
     if (modified) {
@@ -97,23 +139,47 @@
     const originalOpen = xhr.open.bind(xhr);
     let isScript = false;
     let currentUrl = 'unknown';
+    let sanitizedResponse = null;
 
     xhr.open = function (method, url, ...args) {
       if (url && (url.endsWith('.js') || url.includes('.js?'))) {
         isScript = true;
         currentUrl = url;
+      } else {
+        isScript = false;
       }
+      sanitizedResponse = null;
       return originalOpen(method, url, ...args);
     };
 
-    // Intercept response for scripts
+    // Helper to get and cache sanitized response
+    function getSanitizedResponse() {
+      if (sanitizedResponse !== null) return sanitizedResponse;
+      const original = Object.getOwnPropertyDescriptor(OriginalXHR.prototype, 'responseText').get.call(xhr);
+      if (isScript && original) {
+        sanitizedResponse = sanitizeCode(original, `XHR: ${currentUrl}`);
+      } else {
+        sanitizedResponse = original;
+      }
+      return sanitizedResponse;
+    }
+
+    // Intercept responseText for scripts
     Object.defineProperty(xhr, 'responseText', {
       get: function () {
-        const response = Object.getOwnPropertyDescriptor(OriginalXHR.prototype, 'responseText').get.call(this);
-        if (isScript && response) {
-          return sanitizeCode(response, `XHR: ${currentUrl}`);
+        return getSanitizedResponse();
+      }
+    });
+
+    // Intercept response property (used when responseType is '' or 'text')
+    Object.defineProperty(xhr, 'response', {
+      get: function () {
+        const responseType = xhr.responseType;
+        if (isScript && (responseType === '' || responseType === 'text')) {
+          return getSanitizedResponse();
         }
-        return response;
+        // For other response types (arraybuffer, blob, etc.), return original
+        return Object.getOwnPropertyDescriptor(OriginalXHR.prototype, 'response').get.call(this);
       }
     });
 
@@ -128,12 +194,37 @@
     const url = typeof input === 'string' ? input : input.url;
 
     // Check if it's a JavaScript file
-    if (url && (url.endsWith('.js') || url.includes('.js?') || response.headers.get('content-type')?.includes('javascript'))) {
-      const originalText = response.text.bind(response);
-      response.text = async function () {
-        const text = await originalText();
-        return sanitizeCode(text, `fetch: ${url}`);
-      };
+    const contentType = response.headers.get('content-type') || '';
+    const isJavaScript = url && (
+      url.endsWith('.js') ||
+      url.includes('.js?') ||
+      contentType.includes('javascript')
+    );
+
+    if (isJavaScript) {
+      // Clone the response to avoid body consumption issues
+      const clonedResponse = response.clone();
+
+      // Create a new Response with sanitized body
+      return new Response(
+        new ReadableStream({
+          async start(controller) {
+            try {
+              const text = await clonedResponse.text();
+              const sanitized = sanitizeCode(text, `fetch: ${url}`);
+              controller.enqueue(new TextEncoder().encode(sanitized));
+              controller.close();
+            } catch (e) {
+              controller.error(e);
+            }
+          }
+        }),
+        {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers
+        }
+      );
     }
 
     return response;
@@ -458,42 +549,50 @@
   // 3. location.href Protection
   // ============================================
 
-  // Store the original location descriptor
-  const originalLocationDescriptor = Object.getOwnPropertyDescriptor(window, 'location');
+  // Suspicious redirect targets (paths that indicate forced logout/redirect)
+  const SUSPICIOUS_PATHS = ['/', '/login', '/signin', '/auth', '/home', '/index', '/logout', '/signout'];
 
-  // Track navigation attempts
-  let navigationAttempts = [];
-  const MAX_NAVIGATION_HISTORY = 10;
+  // Track if user has interacted (clicks, etc.) - legitimate navigation
+  let userInteracted = false;
+  document.addEventListener('click', () => { userInteracted = true; setTimeout(() => { userInteracted = false; }, 100); }, true);
+  document.addEventListener('submit', () => { userInteracted = true; setTimeout(() => { userInteracted = false; }, 100); }, true);
 
   /**
-   * AGGRESSIVE: Log and potentially block ALL navigation attempts
+   * Smart navigation blocking - only blocks suspicious redirect patterns
    */
   function shouldBlockNavigation(newUrl, method = 'unknown') {
     try {
       const currentUrl = new URL(originalLocation);
       const targetUrl = new URL(newUrl, currentUrl.origin);
       const isSameOrigin = targetUrl.origin === currentUrl.origin;
-      const isHomepage = targetUrl.pathname === '/';
-      const isDifferentPage = targetUrl.pathname !== currentUrl.pathname;
+      const isFromDeepPage = currentUrl.pathname !== '/' && currentUrl.pathname.split('/').filter(Boolean).length > 0;
+      const isToSuspiciousPath = SUSPICIOUS_PATHS.some(p =>
+        targetUrl.pathname === p || targetUrl.pathname === p + '/' || targetUrl.pathname.startsWith(p + '/')
+      );
 
-      // Log ALL navigation attempts for debugging
+      // Allow if user just clicked something (legitimate navigation)
+      if (userInteracted) {
+        log(`✅ Allowed navigation [${method}] (user interaction): ${targetUrl.pathname}`);
+        return false;
+      }
+
+      // Log navigation attempts for debugging
       log(`🔍 Navigation attempt [${method}]:`, {
-        from: originalLocation,
-        to: newUrl,
+        from: currentUrl.pathname,
+        to: targetUrl.pathname,
         sameOrigin: isSameOrigin,
-        toHomepage: isHomepage,
-        differentPage: isDifferentPage
+        toSuspicious: isToSuspiciousPath,
+        fromDeepPage: isFromDeepPage
       });
 
-      // AGGRESSIVE: Block ANY same-origin redirect that goes to a different page
-      // This catches the multi-tab redirect attack
-      if (isSameOrigin && isDifferentPage) {
-        log(`🛡️ BLOCKED redirect [${method}]: ${currentUrl.pathname} -> ${targetUrl.pathname}`);
+      // Block: Same-origin redirect from a deep page to homepage/login (classic multi-tab attack)
+      if (isSameOrigin && isFromDeepPage && isToSuspiciousPath) {
+        log(`🛡️ BLOCKED suspicious redirect [${method}]: ${currentUrl.pathname} -> ${targetUrl.pathname}`);
         blockedCount++;
         return true;
       }
 
-      // Block cross-origin redirects too (suspicious)
+      // Block: Cross-origin redirects (only if programmatic, not user-initiated)
       if (!isSameOrigin) {
         log(`🛡️ BLOCKED cross-origin redirect [${method}]: ${currentUrl.origin} -> ${targetUrl.origin}`);
         blockedCount++;
@@ -507,42 +606,10 @@
     return false;
   }
 
-  // Override location.href setter
-  const locationProxy = new Proxy(window.location, {
-    set(target, prop, value) {
-      if (prop === 'href') {
-        log(`📍 location.href setter called with: ${value}`);
-        if (shouldBlockNavigation(value, 'location.href')) {
-          return true; // Pretend success but don't navigate
-        }
-      }
-      target[prop] = value;
-      return true;
-    },
-    get(target, prop) {
-      const value = target[prop];
-      if (typeof value === 'function') {
-        return value.bind(target);
-      }
-      return value;
-    }
-  });
+  // NOTE: window.location cannot be overridden in modern browsers.
+  // We rely on location.assign/replace/reload overrides instead.
 
-  // Try to replace location (this may not work in all browsers)
-  try {
-    Object.defineProperty(window, 'location', {
-      get() {
-        return locationProxy;
-      },
-      configurable: false
-    });
-    log('location.href protection installed');
-  } catch (e) {
-    // Expected in modern browsers - other protections still work
-    log('location.href override not available (expected in modern browsers)');
-  }
-
-  // Also override location.assign and location.replace
+  // Override location.assign, location.replace, and location.reload
   try {
     const originalAssign = window.location.assign.bind(window.location);
     const originalReplace = window.location.replace.bind(window.location);

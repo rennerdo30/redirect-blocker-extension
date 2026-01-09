@@ -249,3 +249,38 @@ body {
 .btn-link:hover {
   color: var(--text-primary);
 }
+
+/* Toast Notifications */
+.toast {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%) translateY(100px);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 12px;
+  opacity: 0;
+  transition: all 0.3s ease;
+  pointer-events: none;
+  z-index: 1000;
+  max-width: 260px;
+  text-align: center;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.toast.error {
+  background: rgba(233, 69, 96, 0.9);
+  border-color: var(--accent);
+}
+
+.toast.success {
+  background: rgba(78, 204, 163, 0.9);
+  border-color: var(--success);
+}

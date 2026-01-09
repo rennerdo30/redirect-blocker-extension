@@ -129,15 +129,25 @@ async function shouldProtect(url) {
 // Statistics
 // ============================================
 
+// Queue for atomic stats updates to prevent race conditions
+let statsUpdateQueue = Promise.resolve();
+
 async function incrementBlockedCount(url) {
-    const hostname = getHostname(url) || 'unknown';
-    const settings = await getSettings();
+    // Chain updates to prevent race conditions when multiple tabs block simultaneously
+    statsUpdateQueue = statsUpdateQueue.then(async () => {
+        const hostname = getHostname(url) || 'unknown';
+        const settings = await getSettings();
 
-    settings.statistics.totalBlocked++;
-    settings.statistics.blockedBySite[hostname] =
-        (settings.statistics.blockedBySite[hostname] || 0) + 1;
+        settings.statistics.totalBlocked++;
+        settings.statistics.blockedBySite[hostname] =
+            (settings.statistics.blockedBySite[hostname] || 0) + 1;
 
-    await saveSettings(settings);
+        await saveSettings(settings);
+    }).catch(error => {
+        console.error('[RedirectBlocker] Failed to update stats:', error);
+    });
+
+    return statsUpdateQueue;
 }
 
 async function getStatistics() {

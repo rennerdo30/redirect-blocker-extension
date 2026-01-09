@@ -1,6 +1,6 @@
 /**
  * Redirect Blocker - Popup Script
- * 
+ *
  * Handles mode selection and per-site toggle.
  */
 
@@ -8,6 +8,43 @@ document.addEventListener('DOMContentLoaded', init);
 
 let currentTab = null;
 let currentHostname = null;
+let toastTimeout = null;
+
+// ============================================
+// Toast Notifications
+// ============================================
+
+function showToast(message, type = 'info') {
+    const toast = document.getElementById('toast');
+    if (!toast) return;
+
+    // Clear any existing timeout
+    if (toastTimeout) {
+        clearTimeout(toastTimeout);
+    }
+
+    // Remove existing classes
+    toast.classList.remove('show', 'error', 'success');
+
+    // Set message and type
+    toast.textContent = message;
+    if (type === 'error') toast.classList.add('error');
+    if (type === 'success') toast.classList.add('success');
+
+    // Show toast
+    requestAnimationFrame(() => {
+        toast.classList.add('show');
+    });
+
+    // Auto-hide after 3 seconds
+    toastTimeout = setTimeout(() => {
+        toast.classList.remove('show');
+    }, 3000);
+}
+
+// ============================================
+// Initialization
+// ============================================
 
 async function init() {
     // Get current tab
@@ -55,6 +92,7 @@ async function loadSettings() {
         }
     } catch (error) {
         console.error('Failed to load settings:', error);
+        showToast('Failed to load settings', 'error');
     }
 }
 
@@ -65,6 +103,7 @@ async function loadStatistics() {
         document.getElementById('sitesProtected').textContent = Object.keys(stats.blockedBySite || {}).length;
     } catch (error) {
         console.error('Failed to load statistics:', error);
+        showToast('Failed to load statistics', 'error');
     }
 }
 
@@ -97,6 +136,7 @@ async function handleModeChange(event) {
     try {
         await chrome.runtime.sendMessage({ type: 'SET_MODE', mode });
         updateSiteSectionVisibility(mode);
+        showToast(`Mode changed to ${mode}`, 'success');
 
         // Reload tab to apply changes
         if (currentTab?.id) {
@@ -104,6 +144,7 @@ async function handleModeChange(event) {
         }
     } catch (error) {
         console.error('Failed to set mode:', error);
+        showToast('Failed to change mode', 'error');
     }
 }
 
@@ -113,8 +154,10 @@ async function handleSiteToggle() {
     try {
         if (enabled) {
             await chrome.runtime.sendMessage({ type: 'ENABLE_FOR_SITE', url: currentTab.url });
+            showToast(`Protection enabled for ${currentHostname}`, 'success');
         } else {
             await chrome.runtime.sendMessage({ type: 'DISABLE_FOR_SITE', url: currentTab.url });
+            showToast(`Protection disabled for ${currentHostname}`, 'success');
         }
         updateSiteStatus(enabled);
 
@@ -124,6 +167,7 @@ async function handleSiteToggle() {
         }
     } catch (error) {
         console.error('Failed to toggle site:', error);
+        showToast('Failed to toggle protection', 'error');
         document.getElementById('siteToggle').checked = !enabled;
     }
 }
@@ -132,7 +176,9 @@ async function handleResetStats() {
     try {
         await chrome.runtime.sendMessage({ type: 'RESET_STATISTICS' });
         await loadStatistics();
+        showToast('Statistics reset', 'success');
     } catch (error) {
         console.error('Failed to reset statistics:', error);
+        showToast('Failed to reset statistics', 'error');
     }
 }
