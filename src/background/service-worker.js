@@ -52,11 +52,6 @@ async function setMode(mode) {
     console.log(`[RedirectBlocker] Mode set to: ${mode}`);
 }
 
-async function getMode() {
-    const settings = await getSettings();
-    return settings.mode;
-}
-
 // ============================================
 // Per-Site Management (for 'specific' mode)
 // ============================================
