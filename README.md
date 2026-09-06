@@ -1,22 +1,29 @@
 # Redirect Blocker Extension
 
-A powerful Chrome extension that prevents websites from detecting multiple open tabs and forcing redirects. Includes advanced anti-debugging capabilities to bypass detection scripts.
+A Chrome extension (Manifest V3) that stops websites from detecting your other open tabs and
+kicking you back to the homepage. It also neutralizes the anti-debugging tricks such sites tend to
+use, so the page stays usable with DevTools open.
 
-Built as an unpacked Manifest V3 extension - it is not published on the Chrome Web Store, so it has to be loaded in developer mode.
+No build step, no dependencies, no telemetry: plain HTML/CSS/JavaScript loaded as an unpacked
+extension. All settings and counters live in `chrome.storage.local` on your machine.
+
+It is not published on the Chrome Web Store, so it has to be loaded in developer mode.
 
 ## Features
 
-- **🛡️ Multi-Tab Protection**: Blocks BroadcastChannel and localStorage detection methods.
-- **🚫 Anti-Redirect**: Prevents forced redirects to homepage or login pages.
-- **🔧 Anti-Debugging**: Neutralizes `debugger` statements, `devtools-detector`, and right-click blockers.
-- **⚡ Advanced Interception**: Strips malicious code from scripts before they execute.
-- **🔍 3 Operation Modes**: Off, Specific Sites (Opt-in), or Global.
-- **📊 Statistics**: Counts blocked actions per site, shown in the popup and resettable there.
+- **Multi-tab protection** — blocks `BroadcastChannel` and `localStorage`-based tab detection.
+- **Anti-redirect** — blocks forced navigations to the homepage or login page, plus reload loops.
+- **Anti-debugging** — neutralizes `debugger` statements, the `devtools-detector` library and
+  right-click blockers.
+- **Script sanitization** — strips `debugger` from inline and fetched scripts before they run.
+- **Three operation modes** — off, per-site opt-in (default), or global.
+- **Per-tab badge** — the toolbar icon shows `ON`, `OFF` or nothing for the current tab.
+- **Light and dark popup UI** — follows your system theme, with a manual override in the popup.
 
 ## Installation
 
 1. Clone or download this repository.
-2. Open Chrome and go to `chrome://extensions/`.
+2. Open Chrome (or another Chromium browser such as Edge) and go to `chrome://extensions/`.
 3. Enable **Developer mode** (top right).
 4. Click **Load unpacked**.
 5. Select the `redirect-blocker-extension` folder (the one containing `manifest.json`).
@@ -24,59 +31,80 @@ Built as an unpacked Manifest V3 extension - it is not published on the Chrome W
 ## Usage
 
 1. Pin the extension icon to your browser toolbar.
-2. When you visit a site that blocks multiple tabs:
+2. On a site that misbehaves when several tabs are open:
    - Click the extension icon.
-   - Ensure mode is **Specific Sites** (recommended).
-   - Toggle **Enable for [hostname]**.
-3. Reload the page. The protection is now active.
+   - Keep the mode at **Specific sites** (recommended).
+   - Switch the toggle in **Current site** on.
+3. The tab reloads automatically and protection is active — the badge shows `ON`.
 
-## Operation modes
+The popup also shows how many redirect attempts were blocked and how many sites were affected, and
+lets you reset those counters. The theme button in the popup header cycles through
+system → light → dark.
 
-Settings are stored in `chrome.storage.local` under the `settings` key.
+### Operation modes
+
+The mode and the list of enabled hostnames are stored in `chrome.storage.local` under the
+`settings` key.
 
 | Mode | Behaviour |
 |------|-----------|
-| `off` | No injection at all. |
-| `specific` | Default. Protection only on hostnames in the `enabledSites` list, which the popup toggle maintains. |
-| `global` | Protection on every site. |
+| **Off** (`off`) | Nothing is injected; badge shows `OFF`. |
+| **Specific sites** (`specific`, default) | Protection runs only on hostnames in `enabledSites`, which the popup toggle maintains. |
+| **Global** (`global`) | Protection runs on every `http(s)` page. |
 
-The content script is injected at `document_start` into the MAIN world, so protections are in
-place before page scripts run. Because injection is per-site, the page has to be reloaded after
-enabling a hostname.
+The content script is injected at `document_start` into the MAIN world, so protections are in place
+before page scripts run. Because injection is per-site, a page has to be reloaded after enabling its
+hostname.
 
-## Technical Capabilities
-
-- **Script Sanitization**: Uses `MutationObserver` and network interception to remove `debugger` statements from inline and loaded scripts.
-- **Iframe Tunneling**: Hooks `HTMLIFrameElement.prototype.contentWindow` to inject protections into new iframes immediately.
-- **Constructor Tunneling**: Proxies `Function.prototype.constructor` to intercept dynamic code execution (e.g. `(function(){}).constructor("debugger")()`).
-- **Library Neutralization**: Targets and neutralizes the `devtools-detector` library.
-- **Reload Prevention**: Blocks `location.reload()` loops and `history.go(0)` reloads.
-- **Log Forwarding**: Debug logs are forwarded to the Service Worker for persistent analysis.
+Internal pages (`chrome://`, extension pages, local files) cannot be scripted by any extension, so
+the per-site toggle is disabled there.
 
 ## Project structure
 
 ```
-manifest.json                    Manifest V3 definition
-src/background/service-worker.js Settings, per-site state, statistics, log collection
-src/content/blocker.js           Injected protections (document_start, MAIN world)
-src/popup/                       Popup UI (mode selection, per-site toggle, statistics)
-test/redirect-test.html          Local page for trying the protections out
-icons/                           Extension icons
+manifest.json                     # MV3 manifest (permissions, popup, service worker)
+src/background/service-worker.js  # State, messaging, badge, script injection
+src/content/blocker.js            # Protection logic, injected into the page's MAIN world
+src/popup/                        # Popup UI: popup.html, popup.css, popup.js, theme.js
+test/redirect-test.html           # Manual test page that simulates tab detection
+icons/                            # 16 / 48 / 128 px action icons
 ```
 
-Requested permissions: `storage`, `activeTab`, `scripting`, `tabs`, plus `<all_urls>` host
-permissions (needed because protection can be enabled for any hostname).
+After editing any file, press the reload button on the extension card in `chrome://extensions/`.
+Open `test/redirect-test.html` in two tabs to exercise the detection paths by hand.
 
-## Known limitations
+## How it works
 
-- Server-side session tracking cannot be blocked from the client.
-- Modern browsers do not allow `window.location` itself to be replaced, so `location.href`
-  overriding is limited - the remaining protections still apply.
-- Only tested against Chromium-based browsers; Manifest V3 differences mean Firefox needs work.
+- **Script sanitization** — a `MutationObserver` rewrites `<script>` tags, and `fetch` /
+  `XMLHttpRequest` are wrapped to strip `debugger` from loaded `.js` files.
+- **Iframe tunneling** — `HTMLIFrameElement.prototype.contentWindow` is hooked so fresh iframes get
+  the same protections instead of being used as a clean escape hatch.
+- **Constructor tunneling** — `Function.prototype.constructor` is proxied to catch dynamic code such
+  as `(function(){}).constructor("debugger")()`.
+- **Reload prevention** — `location.reload()` and `history.go(0)` loops are blocked.
+- **Log forwarding** — content-script logs are forwarded to the service worker so they survive
+  navigations.
 
-See [ISSUES.md](ISSUES.md) for the current issue list and [SPECIFICATION.md](SPECIFICATION.md)
-for the design notes.
+## Permissions
+
+| Permission | Why it is needed |
+|------------|------------------|
+| `storage` | Persist mode, enabled sites and counters locally. |
+| `activeTab` | Read the hostname of the tab shown in the popup. |
+| `scripting` | Inject the blocker into protected pages. |
+| `tabs` | Detect navigations and update the per-tab badge. |
+| `<all_urls>` | Required because protection can be enabled for any site you choose. |
+
+## Limitations
+
+- `window.location` cannot be fully overridden in modern browsers; the other protections still apply.
+- Server-side session tracking cannot be blocked from the page.
+- Sites may obfuscate their `localStorage` key names to slip past key filtering.
+- Firefox is untested — the manifest needs adjustments there.
+
+See [ISSUES.md](ISSUES.md) for the current status and [SPECIFICATION.md](SPECIFICATION.md) for the
+detailed behaviour matrix.
 
 ## License
 
-MIT License - see [LICENSE](LICENSE).
+[MIT](LICENSE)

@@ -9,6 +9,13 @@
  * - 'global': Protection enabled for all sites
  */
 
+// Badge appearance (kept in sync with the popup accent/success tokens)
+const BADGE_COLOR_ACTIVE = '#2E9E7B';
+const BADGE_COLOR_INACTIVE = '#6B7893';
+const BADGE_TEXT_ACTIVE = 'ON';
+const BADGE_TEXT_DISABLED = 'OFF';
+const BADGE_TEXT_EMPTY = '';
+
 // Default settings
 const DEFAULT_SETTINGS = {
     mode: 'specific',  // 'off' | 'specific' | 'global'
@@ -235,14 +242,14 @@ async function updateBadge(tabId, url) {
     const isProtected = await shouldProtect(url);
 
     if (settings.mode === 'off') {
-        chrome.action.setBadgeBackgroundColor({ color: '#666666', tabId });
-        chrome.action.setBadgeText({ text: 'OFF', tabId });
+        chrome.action.setBadgeBackgroundColor({ color: BADGE_COLOR_INACTIVE, tabId });
+        chrome.action.setBadgeText({ text: BADGE_TEXT_DISABLED, tabId });
     } else if (isProtected) {
-        chrome.action.setBadgeBackgroundColor({ color: '#4CAF50', tabId });
-        chrome.action.setBadgeText({ text: 'ON', tabId });
+        chrome.action.setBadgeBackgroundColor({ color: BADGE_COLOR_ACTIVE, tabId });
+        chrome.action.setBadgeText({ text: BADGE_TEXT_ACTIVE, tabId });
     } else {
-        chrome.action.setBadgeBackgroundColor({ color: '#666666', tabId });
-        chrome.action.setBadgeText({ text: '', tabId });
+        chrome.action.setBadgeBackgroundColor({ color: BADGE_COLOR_INACTIVE, tabId });
+        chrome.action.setBadgeText({ text: BADGE_TEXT_EMPTY, tabId });
     }
 }
 
